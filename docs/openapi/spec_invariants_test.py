@@ -18,6 +18,7 @@ import yaml
 
 
 HERE = Path(__file__).resolve().parent
+REPO_ROOT = HERE.parent.parent
 ENTRY = HERE / "openapi.yaml"
 PATHS_DIR = HERE / "paths" / "management"
 
@@ -395,6 +396,69 @@ def test_warp_credential_contract_is_current():
 
     assert not problems, "Warp credential contract drift:\n    " + "\n    ".join(problems)
 
+
+def test_warp_chat_response_contract_is_current():
+    """WarpChatResponse mirrors warp.ChatResponse: usage is BifrostLLMUsage, not a bare
+    object, and error.code is the closed set the agent actually emits. The chat route is
+    registered only where Warp can read logs and rejects oversized conversations, so its
+    404 and 413 are part of the contract a generated client has to handle."""
+    import json
+
+    schema_source = load(HERE / "schemas" / "management" / "warp.yaml")
+    path_source = load(HERE / "paths" / "management" / "warp.yaml")
+    bundle = json.loads((HERE / "openapi.json").read_text(encoding="utf-8"))
+    problems = []
+
+    # The codes the agent emits, read from the Go source rather than restated here:
+    # a constant that stops being emitted must not linger in the published enum.
+    agent = (REPO_ROOT / "framework" / "warp" / "agent.go").read_text(encoding="utf-8")
+    constants = dict(re.findall(r'(Err[A-Za-z]+)\s+=\s+"([a-z_]+)"', agent))
+    emitted = sorted({
+        constants[name]
+        for name in re.findall(r"Code:\s+(Err[A-Za-z]+)", agent)
+        if name in constants
+    })
+    if not emitted:
+        problems.append("could not read any emitted error codes from framework/warp/agent.go")
+
+    response = schema_source["WarpChatResponse"]["properties"]
+    usage = response["usage"]
+    # Either a direct $ref, or allOf[$ref] - the latter is how OpenAPI 3.0 keeps a
+    # description alongside a referenced schema.
+    refs = [usage["$ref"]] if "$ref" in usage else [
+        entry["$ref"] for entry in (usage.get("allOf") or []) if "$ref" in entry
+    ]
+    if not refs:
+        problems.append(
+            "schemas/management/warp.yaml WarpChatResponse.usage is a bare object; "
+            "reference BifrostLLMUsage so clients get typed token fields"
+        )
+    elif not any("usage.yaml#/BifrostLLMUsage" in ref for ref in refs):
+        problems.append(f"WarpChatResponse.usage references {refs}, not BifrostLLMUsage")
+
+    error = response["error"]
+    declared = sorted(((error.get("properties") or {}).get("code") or {}).get("enum") or [])
+    if declared != emitted:
+        problems.append(
+            f"WarpChatResponse.error.code enum is {declared}, but the agent emits {emitted}"
+        )
+    if sorted(error.get("required") or []) != ["code", "message"]:
+        problems.append("WarpChatResponse.error must require both code and message")
+
+    # The bundle has to carry the resolved usage properties, not an empty object.
+    bundled_usage = bundle["components"]["schemas"]["WarpChatResponse"]["properties"]["usage"]
+    if not (bundled_usage.get("properties") or bundled_usage.get("allOf") or bundled_usage.get("$ref")):
+        problems.append("openapi.json WarpChatResponse.usage resolved to an untyped object")
+
+    chat_responses = path_source["warp-chat"]["post"]["responses"]
+    for status in ("404", "413"):
+        if status not in chat_responses:
+            problems.append(f"paths/management/warp.yaml warp-chat does not declare {status}")
+    if "413" in chat_responses and "content" not in chat_responses["413"]:
+        problems.append("warp-chat 413 returns a JSON error body but documents no schema")
+
+    assert not problems, "Warp chat response contract drift:\n    " + "\n    ".join(problems)
+
 check("no path key has a null Path Item", test_no_null_path_items)
 check("no two paths collide after parameter normalization", test_no_duplicate_path_templates)
 check("every fragment openapi.yaml mounts exists", test_every_mounted_fragment_exists)
@@ -405,6 +469,7 @@ check("vk_rotation_cooldown bounds match config.schema.json", test_vk_rotation_c
 check("bulk rotate ids schema rejects empty arrays", test_bulk_rotate_ids_requires_min_items)
 check("virtual key request contract uses budgets and provider-scoped key_ids", test_virtual_key_request_contract_is_current)
 check("warp credential contract uses api_key_id with no secret field", test_warp_credential_contract_is_current)
+check("warp chat response contract matches the agent", test_warp_chat_response_contract_is_current)
 check("every operation declares its own security", test_every_operation_declares_security)
 
 print(f"\n{passed} passed, {failed} failed")

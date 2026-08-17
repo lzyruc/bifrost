@@ -203,6 +203,7 @@ func parseTime(value any, now time.Time) (*time.Time, error) {
 	return &parsed, nil
 }
 
+// stringSlice reads a JSON array of strings, dropping empties. Returns nil when absent, so the filter field stays unset rather than becoming an empty IN clause.
 func stringSlice(value any) []string {
 	items, ok := value.([]any)
 	if !ok {
@@ -220,6 +221,7 @@ func stringSlice(value any) []string {
 	return result
 }
 
+// floatPtr reads an optional JSON number into the pointer the filter expects.
 func floatPtr(value any) *float64 {
 	number, ok := value.(float64)
 	if !ok {
@@ -228,6 +230,11 @@ func floatPtr(value any) *float64 {
 	return &number
 }
 
+// intArg reads a bounded integer argument.
+//
+// Values above max are clamped rather than rejected: the cap exists to protect
+// the context window, not to police the model, and failing the call would cost
+// an extra round trip to arrive at the number we would have used anyway.
 func intArg(args map[string]any, key string, fallback, max int) int {
 	value, ok := args[key].(float64)
 	if !ok {
@@ -243,11 +250,13 @@ func intArg(args map[string]any, key string, fallback, max int) int {
 	return min(result, max)
 }
 
+// boolArg reads an optional boolean argument, defaulting to false.
 func boolArg(args map[string]any, key string) bool {
 	value, _ := args[key].(bool)
 	return value
 }
 
+// filterArg parses the shared filter object every flow accepts.
 func filterArg(args map[string]any, now time.Time) (*logstore.SearchFilters, error) {
 	raw, _ := args["filters"].(map[string]any)
 	return parseFilters(raw, now)
@@ -274,11 +283,14 @@ func boundToolResult(result any) string {
 	)
 }
 
-// truncateText cuts on rune boundaries, not byte offsets. Log content is
-// arbitrary user text and often non-ASCII, so a byte slice would split a
-// multi-byte rune and leave invalid UTF-8 in the tool result - the model reads
-// a replacement character where the original was. The budgets above are
-// documented as character counts, so counting runes is also what they mean.
+// truncateText caps a string and marks it, so the model can tell it is reading
+// a fragment rather than the whole value.
+//
+// The cut is on rune boundaries, not byte offsets. Log content is arbitrary
+// user text and often non-ASCII, so a byte slice would split a multi-byte rune
+// and leave invalid UTF-8 in the tool result - the model reads a replacement
+// character where the original was. The budgets above are documented as
+// character counts, so counting runes is also what they mean.
 func truncateText(text string, limit int) string {
 	if utf8.RuneCountInString(text) <= limit {
 		return text
@@ -313,6 +325,9 @@ type logRow struct {
 	Content        string  `json:"content,omitempty"`
 }
 
+// projectLog reduces a log row to the fields that answer operational
+// questions. The full row carries raw request and response bodies; returning
+// even a handful of those would exhaust the context window.
 func projectLog(entry *logstore.Log, includeContent bool, contentLimit int) logRow {
 	row := logRow{
 		ID:        entry.ID,
@@ -339,6 +354,7 @@ func projectLog(entry *logstore.Log, includeContent bool, contentLimit int) logR
 	return row
 }
 
+// derefFloat reads a *float64, treating nil as zero.
 func derefFloat(value *float64) float64 {
 	if value == nil {
 		return 0
@@ -435,6 +451,7 @@ func chatTools(tools []Tool) ([]schemas.ChatTool, error) {
 	return declared, nil
 }
 
+// toolByName looks up a tool by the name the model used.
 func toolByName(tools []Tool, name string) (*Tool, bool) {
 	for i := range tools {
 		if tools[i].name == name {
