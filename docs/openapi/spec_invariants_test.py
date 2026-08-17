@@ -317,6 +317,84 @@ def test_virtual_key_request_contract_is_current():
     assert not problems, "Virtual Key request contract drift:\n    " + "\n    ".join(problems)
 
 
+
+def test_warp_credential_contract_is_current():
+    """Warp's settings API carries `api_key_id`, a reference to a configured provider key.
+    There is no write-only `api_key` and no `api_key_set` presence flag, so no redaction
+    step and no omitted-versus-empty rule. `base_url` overrides the provider's default
+    endpoint; it does not default to this Bifrost's own origin. Guard the modular source
+    and the published bundle against prose that still describes the abandoned design."""
+    import json
+
+    schema_source = load(HERE / "schemas" / "management" / "warp.yaml")
+    schema_text = (HERE / "schemas" / "management" / "warp.yaml").read_text(encoding="utf-8")
+    path_text = (HERE / "paths" / "management" / "warp.yaml").read_text(encoding="utf-8")
+    bundle = json.loads((HERE / "openapi.json").read_text(encoding="utf-8"))
+    bundle_schemas = bundle["components"]["schemas"]
+    problems = []
+
+    # The retired design: a write-only secret, its presence flag, and the
+    # redaction and omitted-versus-empty rules that only a secret field needs.
+    retired = ("api_key_set", "credential redacted", "the credential redacted")
+
+    for where, blob in (
+        ("schemas/management/warp.yaml", schema_text),
+        ("paths/management/warp.yaml", path_text),
+    ):
+        for phrase in retired:
+            if phrase in blob:
+                problems.append(f"{where}: still describes retired `{phrase}`")
+        # `api_key` as a field of its own, not as part of `api_key_id`.
+        if re.search(r"`api_key`", blob):
+            problems.append(f"{where}: still documents a write-only `api_key` field")
+        if "Defaults to this Bifrost's own origin" in blob:
+            problems.append(f"{where}: base_url still claims it defaults to this Bifrost's origin")
+
+    for schema_name in ("WarpConfig", "WarpConfigInput"):
+        for where, schema in (
+            ("schemas/management/warp.yaml", schema_source[schema_name]),
+            ("openapi.json", bundle_schemas[schema_name]),
+        ):
+            properties = schema["properties"]
+            for legacy in ("api_key", "api_key_set"):
+                if legacy in properties:
+                    problems.append(f"{where} {schema_name}: unexpected {legacy} property")
+            if "api_key_id" not in properties:
+                problems.append(f"{where} {schema_name}: missing api_key_id")
+
+            descriptions = [schema.get("description") or ""]
+            descriptions += [
+                (prop.get("description") or "") for prop in properties.values()
+            ]
+            for description in descriptions:
+                for phrase in retired:
+                    if phrase in description:
+                        problems.append(
+                            f"{where} {schema_name}: description still mentions `{phrase}`"
+                        )
+                if "Defaults to this Bifrost's own origin" in description:
+                    problems.append(
+                        f"{where} {schema_name}: base_url description claims the wrong default"
+                    )
+
+    operations = bundle["paths"]["/api/warp/config"]
+    for method, operation in operations.items():
+        if not isinstance(operation, dict):
+            continue
+        description = operation.get("description") or ""
+        for phrase in retired:
+            if phrase in description:
+                problems.append(
+                    f"openapi.json {method.upper()} /api/warp/config: description mentions `{phrase}`"
+                )
+        for response in (operation.get("responses") or {}).values():
+            if isinstance(response, dict) and "redacted" in (response.get("description") or ""):
+                problems.append(
+                    f"openapi.json {method.upper()} /api/warp/config: response claims redaction"
+                )
+
+    assert not problems, "Warp credential contract drift:\n    " + "\n    ".join(problems)
+
 check("no path key has a null Path Item", test_no_null_path_items)
 check("no two paths collide after parameter normalization", test_no_duplicate_path_templates)
 check("every fragment openapi.yaml mounts exists", test_every_mounted_fragment_exists)
@@ -326,6 +404,7 @@ check("legacy aliases are mounted and their successors documented", test_legacy_
 check("vk_rotation_cooldown bounds match config.schema.json", test_vk_rotation_cooldown_bounds_match_config_schema)
 check("bulk rotate ids schema rejects empty arrays", test_bulk_rotate_ids_requires_min_items)
 check("virtual key request contract uses budgets and provider-scoped key_ids", test_virtual_key_request_contract_is_current)
+check("warp credential contract uses api_key_id with no secret field", test_warp_credential_contract_is_current)
 check("every operation declares its own security", test_every_operation_declares_security)
 
 print(f"\n{passed} passed, {failed} failed")
