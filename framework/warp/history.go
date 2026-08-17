@@ -144,7 +144,7 @@ func (s *Service) recordTurn(ctx context.Context, turn *Turn, response ChatRespo
 	// Only ever report an id that was actually filed. Falling back to the
 	// caller's own id handed the client a thread its owner-scoped endpoint
 	// cannot fetch - the exchange looks saved, and is not.
-	return s.persistTurn(writeCtx, turn.ConversationID, turn.questionRole, turn.question, stored)
+	return s.persistTurn(writeCtx, turn.ConversationID, turn.IsNew, turn.questionRole, turn.question, stored)
 }
 
 // persistTurn saves one exchange, creating the thread on the first turn.
@@ -153,7 +153,13 @@ func (s *Service) recordTurn(ctx context.Context, turn *Turn, response ChatRespo
 // returns an error to the caller: history is a convenience, and failing a
 // perfectly good answer because it could not be filed would trade the thing
 // someone asked for against the thing they did not.
-func (s *Service) persistTurn(ctx context.Context, conversationID, questionRole, question string, answer schemas.WarpStoredMessage) string {
+//
+// isNew, rather than an empty id, decides whether the thread row gets created.
+// The id is minted before the first model call so it can ride upstream as a
+// logging header, which means it is never empty by the time it reaches here -
+// and inferring "new" from emptiness would silently stop creating threads
+// altogether, leaving every message orphaned.
+func (s *Service) persistTurn(ctx context.Context, conversationID string, isNew bool, questionRole, question string, answer schemas.WarpStoredMessage) string {
 	if s.conversations == nil {
 		return ""
 	}
@@ -172,6 +178,9 @@ func (s *Service) persistTurn(ctx context.Context, conversationID, questionRole,
 	createdHere := false
 	if conversationID == "" {
 		conversationID = uuid.NewString()
+		isNew = true
+	}
+	if isNew {
 		if err := s.conversations.CreateWarpConversation(ctx, &tables.TableWarpConversation{
 			ID:        conversationID,
 			OwnerID:   owner,
