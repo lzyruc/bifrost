@@ -47,6 +47,12 @@ func (f *fakeLogReader) GetDimensionRankings(ctx context.Context, filters *logst
 	return &logstore.DimensionRankingResult{}, nil
 }
 
+func (f *fakeLogReader) GetModelRankings(ctx context.Context, filters *logstore.SearchFilters) (*logstore.ModelRankingResult, error) {
+	f.sawContext = ctx
+	f.rankingFilters = filters
+	return &logstore.ModelRankingResult{}, nil
+}
+
 func (f *fakeLogReader) GetStats(ctx context.Context, filters *logstore.SearchFilters) (*logstore.SearchStats, error) {
 	f.sawContext = ctx
 	f.statsCalled = true
@@ -464,4 +470,67 @@ func (f *fakeFilterSpaceReader) GetAvailableStopReasons(context.Context, int, st
 }
 func (f *fakeFilterSpaceReader) GetAvailableVirtualKeys(context.Context, int, string) ([]KeyPair, error) {
 	return []KeyPair{{ID: "vk-1", Name: "default"}}, nil
+}
+
+// describe_scope reads its dimension lists from rankings, so the fake answers
+// those too - with nothing, which is enough to exercise the payload shape.
+func (f *fakeFilterSpaceReader) GetDimensionRankings(context.Context, *logstore.SearchFilters, logstore.RankingDimension) (*logstore.DimensionRankingResult, error) {
+	return &logstore.DimensionRankingResult{}, nil
+}
+
+// describe_scope's result goes to the configured model, which is frequently a
+// third-party provider. The model needs to know *whether* the caller is
+// identified so it can decide whether to ask whose traffic is meant; the stable
+// id itself is only ever used server-side by applyScope, so sending it is
+// identity data leaving the deployment for no benefit.
+func TestWarpDescribeScopeDoesNotLeakCallerUserID(t *testing.T) {
+	tool, ok := toolByName(buildTools(), "describe_scope")
+	require.True(t, ok)
+
+	deps := &ToolDeps{logManager: &fakeFilterSpaceReader{}, scope: Scope{HasIdentity: true, UserID: "u-secret-42"}}
+	result, err := tool.execute(context.Background(), deps, map[string]any{})
+	require.NoError(t, err)
+
+	out := result.(map[string]any)
+	require.Equal(t, true, out["caller_is_identified"], "the model still needs to know an identity exists")
+	require.NotContains(t, out, "caller_user_id", "the caller's stable id must not reach the model")
+
+	encoded := boundToolResult(out)
+	require.NotContains(t, encoded, "u-secret-42", "the id must not reach the model by any key")
+}
+
+// An identified caller who asks about everyone's traffic gets narrowed to their
+// own, because "named no scope" and "explicitly asked for all" were the same
+// empty filter. The two have to be distinguishable, and row-level queryscope
+// still bounds what "all" can actually return.
+func TestWarpFilterScopeAllBypassesCallerDefault(t *testing.T) {
+	caller := Scope{HasIdentity: true, UserID: "u-1"}
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+
+	// Omitted: the caller default still applies, which is the safe reading of a
+	// question that did not say whose traffic it meant.
+	defaulted, err := filterArg(map[string]any{"filters": map[string]any{}}, now, caller)
+	require.NoError(t, err)
+	require.Equal(t, []string{"u-1"}, defaulted.UserIDs)
+
+	// Explicit: the caller asked about the whole deployment and must get it.
+	all, err := filterArg(map[string]any{"filters": map[string]any{"scope": "all"}}, now, caller)
+	require.NoError(t, err)
+	require.Empty(t, all.UserIDs, `scope "all" must not be narrowed back to the caller`)
+
+	// Explicit caller scope stays explicit.
+	mine, err := filterArg(map[string]any{"filters": map[string]any{"scope": "caller"}}, now, caller)
+	require.NoError(t, err)
+	require.Equal(t, []string{"u-1"}, mine.UserIDs)
+
+	// A named dimension still wins over the default, unchanged.
+	named, err := filterArg(map[string]any{"filters": map[string]any{"team_ids": []any{"t-1"}}}, now, caller)
+	require.NoError(t, err)
+	require.Empty(t, named.UserIDs)
+	require.Equal(t, []string{"t-1"}, named.TeamIDs)
+
+	// An unrecognised value is rejected rather than silently read as "caller":
+	// guessing here would answer a different question than the one asked.
+	_, err = filterArg(map[string]any{"filters": map[string]any{"scope": "everyone"}}, now, caller)
+	require.ErrorContains(t, err, "scope")
 }

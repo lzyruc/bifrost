@@ -61,6 +61,10 @@ var Now = func() time.Time { return time.Now().UTC() }
 // is the decision point for whether Warp can see something new.
 type ToolDeps struct {
 	logManager LogReader
+	// scope is the caller's default slice of traffic. It narrows a question that
+	// named no scope of its own; it is not an access control, which queryscope
+	// already applies inside the store.
+	scope Scope
 }
 
 // Tool pairs a model-facing declaration with its executor.
@@ -97,7 +101,8 @@ const FilterSchema = `{
     "max_latency": {"type": "number", "description": "Milliseconds."},
     "min_cost": {"type": "number"},
     "max_cost": {"type": "number"},
-    "content_search": {"type": "string", "description": "Substring match against request and response content."}
+    "content_search": {"type": "string", "description": "Substring match against request and response content."},
+    "scope": {"type": "string", "enum": ["caller", "all"], "description": "Whose traffic. Omit to default to the caller's own. Use \"all\" only when the question is explicitly about everyone's traffic - results are still limited to what the caller may see."}
   }
 }`
 
@@ -118,6 +123,7 @@ func parseFilters(raw map[string]any, now time.Time) (*logstore.SearchFilters, e
 		"status": true, "virtual_key_ids": true, "team_ids": true, "customer_ids": true,
 		"user_ids": true, "business_unit_ids": true, "apps": true, "min_latency": true,
 		"max_latency": true, "min_cost": true, "max_cost": true, "content_search": true,
+		"scope": true,
 	}
 	unknown := []string{}
 	for key := range raw {
@@ -127,7 +133,7 @@ func parseFilters(raw map[string]any, now time.Time) (*logstore.SearchFilters, e
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return nil, fmt.Errorf("unknown filter fields: %s. Supported fields are: start_time, end_time, providers, models, status, virtual_key_ids, team_ids, customer_ids, user_ids, business_unit_ids, apps, min_latency, max_latency, min_cost, max_cost, content_search", strings.Join(unknown, ", "))
+		return nil, fmt.Errorf("unknown filter fields: %s. Supported fields are: start_time, end_time, providers, models, status, virtual_key_ids, team_ids, customer_ids, user_ids, business_unit_ids, apps, min_latency, max_latency, min_cost, max_cost, content_search, scope", strings.Join(unknown, ", "))
 	}
 
 	start, err := parseTime(raw["start_time"], now)
@@ -256,10 +262,27 @@ func boolArg(args map[string]any, key string) bool {
 	return value
 }
 
-// filterArg parses the shared filter object every flow accepts.
-func filterArg(args map[string]any, now time.Time) (*logstore.SearchFilters, error) {
+// filterArg parses the shared filter object every flow accepts and applies
+// the caller's default scope.
+//
+// Every flow goes through here, which is what makes the default impossible to
+// forget: a tool added later gets the scoping by construction rather than by
+// its author remembering to ask for it.
+func filterArg(args map[string]any, now time.Time, scope Scope) (*logstore.SearchFilters, error) {
 	raw, _ := args["filters"].(map[string]any)
-	return parseFilters(raw, now)
+	filters, err := parseFilters(raw, now)
+	if err != nil {
+		return nil, err
+	}
+	// Read before the filters are handed on: an explicit "all" is a different
+	// question from one that simply named no scope, and only the marker can tell
+	// them apart.
+	mode, err := ParseScopeMode(raw["scope"])
+	if err != nil {
+		return nil, err
+	}
+	applyScope(filters, scope, mode)
+	return filters, nil
 }
 
 // boundToolResult serializes a result and enforces the byte budget.
@@ -428,6 +451,7 @@ func buildTools() []Tool {
 		queryVirtualKeysTool(),
 		queryModelsTool(),
 		describeFilterSpaceTool(),
+		describeScopeTool(),
 	}
 }
 
