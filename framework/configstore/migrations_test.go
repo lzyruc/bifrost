@@ -3975,3 +3975,40 @@ func TestMigrationAddWarpAPIKeyIDColumn_NonRollbackable(t *testing.T) {
 	require.NoError(t, db.Where("id = ?", seed.ID).First(&got).Error)
 	assert.Equal(t, "key-abc", got.APIKeyID, "the surviving key reference must be untouched")
 }
+
+// TestMigrationAddWarpConversationTables_NonRollbackable pins that rolling the
+// history tables back is refused while they hold anything. warp_conversations
+// and warp_messages are persistent user content - saved chats someone can
+// reopen - so dropping them is not a schema reversal, it is deleting the data.
+// An empty pair is still safe to drop, which keeps a failed upgrade reversible.
+func TestMigrationAddWarpConversationTables_NonRollbackable(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	require.NoError(t, migrationAddWarpConversationTables(ctx, db, testMigrationLogger))
+	require.True(t, db.Migrator().HasTable(&tables.TableWarpConversation{}))
+	require.True(t, db.Migrator().HasTable(&tables.TableWarpMessage{}))
+
+	// Empty: the rollback is a genuine reversal and must be allowed.
+	require.NoError(t, rollbackWarpConversationTables(db))
+	require.False(t, db.Migrator().HasTable(&tables.TableWarpConversation{}),
+		"an empty history is safe to drop")
+
+	// Re-create via AutoMigrate, not the migration: migration ids are write-once,
+	// so a second run of the same id is recorded as already applied and does
+	// nothing. Then seed a saved conversation, so the drop would destroy content.
+	require.NoError(t, db.AutoMigrate(&tables.TableWarpConversation{}, &tables.TableWarpMessage{}))
+	require.NoError(t, db.Create(&tables.TableWarpConversation{
+		ID: "c-1", OwnerID: "u-1", Title: "how much did we spend?",
+	}).Error)
+
+	err := rollbackWarpConversationTables(db)
+	require.Error(t, err, "rollback must refuse while saved conversations exist")
+	assert.Contains(t, err.Error(), "non-rollbackable")
+	assert.True(t, db.Migrator().HasTable(&tables.TableWarpConversation{}),
+		"a refused rollback must leave the table intact")
+
+	var surviving int64
+	require.NoError(t, db.Model(&tables.TableWarpConversation{}).Count(&surviving).Error)
+	assert.EqualValues(t, 1, surviving, "the saved conversation must survive")
+}

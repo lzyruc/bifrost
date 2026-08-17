@@ -496,6 +496,46 @@ var configstoreMigrationSteps = []migrationStep{
 	{IDs: []string{"add_time_of_day_pricing_columns"}, run: migrationAddTimeOfDayPricingColumns},
 	{IDs: []string{"add_warp_config_table"}, run: migrationAddWarpConfigTable},
 	{IDs: []string{"add_warp_api_key_id_column"}, run: migrationAddWarpAPIKeyIDColumn},
+	{IDs: []string{"add_warp_conversation_tables"}, run: migrationAddWarpConversationTables},
+}
+
+// migrationAddWarpConversationTables creates Warp's saved-chat storage.
+func migrationAddWarpConversationTables(ctx context.Context, db *gorm.DB, logger schemas.Logger) error {
+	migrationName := "add_warp_conversation_tables"
+	logger.Info("[configstore] starting migration %s", migrationName)
+	defer logger.Info("[configstore] finished migration %s", migrationName)
+	return RunSingleMigration(ctx, nil, db, logger, &migrator.Migration{
+		ID: migrationName,
+		Migrate: func(tx *gorm.DB) error {
+			return tx.WithContext(ctx).AutoMigrate(&tables.TableWarpConversation{}, &tables.TableWarpMessage{})
+		},
+		Rollback: func(tx *gorm.DB) error {
+			return rollbackWarpConversationTables(tx.WithContext(ctx))
+		},
+	})
+}
+
+// rollbackWarpConversationTables drops Warp's history tables, but only while
+// they are empty.
+//
+// These hold user content, not schema: a saved conversation is something
+// someone can reopen, so dropping a populated pair is deleting their data
+// rather than reversing a migration. Empty is still reversible, which keeps a
+// failed upgrade recoverable without putting saved chats at risk.
+func rollbackWarpConversationTables(tx *gorm.DB) error {
+	for _, table := range []any{&tables.TableWarpMessage{}, &tables.TableWarpConversation{}} {
+		if !tx.Migrator().HasTable(table) {
+			continue
+		}
+		var rows int64
+		if err := tx.Model(table).Count(&rows).Error; err != nil {
+			return fmt.Errorf("could not check warp history before rollback: %w", err)
+		}
+		if rows > 0 {
+			return fmt.Errorf("add_warp_conversation_tables is non-rollbackable: warp_conversations and warp_messages hold saved chats, and dropping them would delete that content rather than reverse a schema change; clear the history first if the rollback is genuinely intended")
+		}
+	}
+	return tx.Migrator().DropTable(&tables.TableWarpMessage{}, &tables.TableWarpConversation{})
 }
 
 // videoResolutionPricingColumns are the resolution-banded video output rate columns.
