@@ -96638,6 +96638,9 @@
           "403": {
             "description": "Caller is not an administrator"
           },
+          "409": {
+            "description": "Embedding configuration cannot change during an active backfill"
+          },
           "500": {
             "description": "Internal server error",
             "content": {
@@ -96664,6 +96667,170 @@
             "ManagementBearerAuth": []
           }
         ]
+      }
+    },
+    "/api/warp/log-index/backfill": {
+      "post": {
+        "operationId": "startWarpLogEmbeddingBackfill",
+        "summary": "Start a Warp log embedding backfill",
+        "tags": [
+          "Warp"
+        ],
+        "security": [
+          {
+            "ManagementBearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WarpBackfillRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Backfill accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarpBackfillStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an administrator"
+          },
+          "409": {
+            "description": "A Warp embedding backfill is already active"
+          },
+          "503": {
+            "description": "Config store not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/warp/log-index/backfill/status": {
+      "get": {
+        "operationId": "getWarpLogEmbeddingBackfillStatus",
+        "summary": "Read Warp log embedding backfill progress",
+        "tags": [
+          "Warp"
+        ],
+        "security": [
+          {
+            "ManagementBearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current job, or an idle status when no job is active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarpBackfillStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an administrator"
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/warp/log-index/backfill/cancel": {
+      "post": {
+        "operationId": "cancelWarpLogEmbeddingBackfill",
+        "summary": "Cancel a Warp log embedding backfill",
+        "tags": [
+          "Warp"
+        ],
+        "security": [
+          {
+            "ManagementBearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cancelled or already-terminal job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarpBackfillStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an administrator"
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BifrostError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/warp/chat": {
@@ -118249,6 +118416,92 @@
             "default": 10
           }
         }
+      },
+      "WarpBackfillRequest": {
+        "type": "object",
+        "properties": {
+          "start_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "end_time": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "start_time",
+          "end_time"
+        ]
+      },
+      "WarpBackfillStatus": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "start_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "end_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "scanned": {
+            "type": "integer"
+          },
+          "indexed": {
+            "type": "integer"
+          },
+          "skipped": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "status",
+          "total",
+          "scanned",
+          "indexed",
+          "skipped",
+          "failed"
+        ]
       },
       "WarpUnavailable": {
         "type": "object",
