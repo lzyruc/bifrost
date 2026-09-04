@@ -15,6 +15,7 @@ import (
 func chatService(model *scriptedModel, fake *fakeLogReader) *Service {
 	return NewService(nil,
 		WithConfigStore(&recordingStore{row: validWarpConfigRow()}),
+		WithVectorStore(newFakeWarpVectorStore()),
 		WithLogReader(fake),
 		WithChatFunc(model.respond),
 	)
@@ -115,6 +116,7 @@ func TestWarpRunTurnStopsWhenSinkRefuses(t *testing.T) {
 	}
 	service := NewService(nil,
 		WithConfigStore(&recordingStore{row: validWarpConfigRow()}),
+		WithVectorStore(newFakeWarpVectorStore()),
 		WithLogReader(&fakeLogReader{}),
 		WithChatFunc(blocking),
 	)
@@ -176,6 +178,7 @@ func TestWarpRunTurnStampsConversationIDOnDone(t *testing.T) {
 	model := &scriptedModel{turns: []*schemas.BifrostResponsesResponse{TextTurn("42 requests.")}}
 	service := NewService(nil,
 		WithConfigStore(&recordingStore{row: validWarpConfigRow()}),
+		WithVectorStore(newFakeWarpVectorStore()),
 		WithLogReader(&fakeLogReader{}),
 		WithChatFunc(model.respond),
 		WithConversationStore(store),
