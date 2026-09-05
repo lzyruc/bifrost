@@ -579,6 +579,7 @@ type fakeSidekiqStore struct {
 	jobs     map[string]*tables.TableSidekiqJob
 	created  int
 	inFlight *tables.TableSidekiqJob
+	latest   *tables.TableSidekiqJob
 }
 
 // newFakeSidekiqStore verifies new fake sidekiq store.
@@ -626,6 +627,18 @@ func (s *fakeSidekiqStore) GetInFlightSidekiqJobByKind(ctx context.Context, kind
 }
 
 // ClaimSidekiqJob implements the test double used by logging handler tests.
+func (s *fakeSidekiqStore) GetLatestSidekiqJobByKind(ctx context.Context, kind string) (*tables.TableSidekiqJob, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, candidate := range []*tables.TableSidekiqJob{s.inFlight, s.latest} {
+		if candidate != nil && candidate.Kind == kind {
+			copy := *candidate
+			return &copy, nil
+		}
+	}
+	return nil, nil
+}
+
 func (s *fakeSidekiqStore) ClaimSidekiqJob(ctx context.Context, id, runnerID string, staleBefore time.Time) (bool, error) {
 	return true, nil
 }

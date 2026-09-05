@@ -5,6 +5,7 @@ import {
 	type WarpEvent,
 	type WarpQuestion,
 	type WarpUsage,
+	isPartialAnswer,
 } from "@/components/warp/warpStream.utils";
 import type { WarpTurn, WarpTurnToolCall } from "@/lib/contexts/warpContext";
 import { getApiBaseUrl } from "@/lib/utils/port";
@@ -30,6 +31,8 @@ interface UseWarpStreamResult {
 	stop: () => void;
 	/** Forgets the current thread, so the next question opens a new one. */
 	resetConversation: () => void;
+	/** Continues a stored thread: the next question is filed under it. */
+	openConversation: (id: string) => void;
 }
 
 /**
@@ -89,6 +92,7 @@ export function useWarpStream({ onTurnComplete }: UseWarpStreamOptions): UseWarp
 			let terminalError: string | null = null;
 			let posed: WarpQuestion | null = null;
 			let usage: WarpUsage | undefined;
+			let partial = false;
 
 			const applyEvent = (event: WarpEvent) => {
 				switch (event.type) {
@@ -108,6 +112,7 @@ export function useWarpStream({ onTurnComplete }: UseWarpStreamOptions): UseWarp
 						break;
 					case "done":
 						usage = event.usage;
+						partial = isPartialAnswer(event.finish_reason);
 						// The server mints the id when a thread is new, so this is the only
 						// place the client learns it.
 						if (event.conversation_id) conversationRef.current = event.conversation_id;
@@ -200,6 +205,7 @@ export function useWarpStream({ onTurnComplete }: UseWarpStreamOptions): UseWarp
 						content: text,
 						toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
 						error: terminalError ?? undefined,
+						partial: partial || undefined,
 						// Recorded on the turn so a reopened thread shows the question that
 						// was asked, not just the gap where an answer would be.
 						question: posed ?? undefined,
@@ -219,5 +225,20 @@ export function useWarpStream({ onTurnComplete }: UseWarpStreamOptions): UseWarp
 		conversationRef.current = "";
 	}, []);
 
-	return { streamingText, streamingToolCalls, isStreaming, error, question, clearQuestion, send, stop, resetConversation };
+	const openConversation = useCallback((id: string) => {
+		conversationRef.current = id;
+	}, []);
+
+	return {
+		streamingText,
+		streamingToolCalls,
+		isStreaming,
+		error,
+		question,
+		clearQuestion,
+		send,
+		stop,
+		resetConversation,
+		openConversation,
+	};
 }
