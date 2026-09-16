@@ -271,6 +271,13 @@ type TableVirtualKey struct {
 	// Populated on the governance read paths from the external resolver; false in OSS.
 	IsAccessProfileManaged bool `gorm:"-" json:"is_access_profile_managed,omitempty"`
 
+	// AssignedUser is the user this key is assigned to, when any. Like
+	// IsAccessProfileManaged it is read-only and never persisted: the VK-user link
+	// lives in an enterprise table, so it is filled in on the governance read paths
+	// by a downstream resolver and stays nil in OSS. No omitempty - the UI needs to
+	// tell "no assignee" (null) apart from "not resolved" (key absent).
+	AssignedUser *AssignedUser `gorm:"-" json:"assigned_user"`
+
 	// Config hash is used to detect the changes synced from config.json file
 	// Every time we sync the config.json file, we will update the config hash
 	ConfigHash string `gorm:"type:varchar(255);null" json:"config_hash"`
@@ -293,6 +300,16 @@ type TableVirtualKey struct {
 
 	CreatedAt time.Time `gorm:"index;not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"index;not null" json:"updated_at"`
+}
+
+// AssignedUser is the minimal projection of the user a virtual key is assigned to,
+// carried on read responses so callers do not need a second, per-key lookup. It is
+// deliberately not the full user row: a list response has no business shipping
+// claims, config, or role.
+type AssignedUser struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
 // TableName sets the table name for each model
