@@ -70,7 +70,7 @@ import { useVirtualKeyUsage } from "../hooks/useVirtualKeyUsage";
 import VirtualKeyDetailSheet from "./virtualKeyDetailsSheet";
 import { VirtualKeysEmptyState } from "./virtualKeysEmptyState";
 import VirtualKeySheet from "./virtualKeySheet";
-import { latestGraceDeadline } from "./virtualKeysTable.utils";
+import { assignedToLabel, latestGraceDeadline } from "./virtualKeysTable.utils";
 
 // Registers the enterprise user picker as a side effect; a no-op in OSS builds,
 // where the user filter stays hidden because no picker is registered.
@@ -93,7 +93,7 @@ function virtualKeysToCSV(vks: VirtualKey[]): string {
 				vk.rate_limit.request_current_usage >= vk.rate_limit.request_max_limit);
 		const isExpired = !!vk.expires_at && Date.now() >= new Date(vk.expires_at).getTime();
 		const status = !vk.is_active ? "Inactive" : isExpired ? "Expired" : isExhausted ? "Exhausted" : "Active";
-		const assignedTo = vk.team ? `Team: ${vk.team.name}` : vk.customer ? `Customer: ${vk.customer.name}` : "";
+		const assignedTo = assignedToLabel(vk) ?? "";
 		const budgetLimit = vk.budgets?.length ? vk.budgets.map((b) => formatCurrency(getEffectiveBudgetLimit(b))).join("; ") : "";
 		const budgetSpent = vk.budgets?.length ? vk.budgets.map((b) => formatCurrency(b.current_usage)).join("; ") : "";
 		const budgetReset = vk.budgets?.length ? vk.budgets.map((b) => formatResetDuration(b.reset_duration)).join("; ") : "";
@@ -147,17 +147,9 @@ function FilterClearButton({
 }
 
 function VKAssignedToCell({ vk }: { vk: VirtualKey }) {
-	const { assignedUsers } = useVirtualKeyUsage(vk);
-	const assignedUser = assignedUsers[0];
-
-	let label: string | null = null;
-	if (vk.team) {
-		label = `Team: ${vk.team.name}`;
-	} else if (vk.customer) {
-		label = `Customer: ${vk.customer.name}`;
-	} else if (assignedUser) {
-		label = `User: ${assignedUser.name || assignedUser.email}`;
-	}
+	// Reads the assignee straight off the row. The list endpoint resolves it for the
+	// whole page, so this no longer costs one request per row.
+	const label = assignedToLabel(vk);
 
 	if (!label) {
 		return <span className="text-muted-foreground max-w-full truncate text-left text-sm">-</span>;
@@ -595,6 +587,10 @@ export default function VirtualKeysTable({
 	// Registered by the downstream build at module load; undefined in builds
 	// without a user directory, which hides the user filter entirely.
 	const UserPicker = getUserPicker();
+	// Server-side search matches the key name, its team and its customer, plus the
+	// assigned user where there is a user directory to match against. Same signal as
+	// the user filter below, so the placeholder never promises what OSS cannot do.
+	const searchHint = UserPicker ? "name, user, team, or customer" : "name, team, or customer";
 
 	const toggleSort = (column: string) => {
 		if (sortBy === column) {
@@ -814,8 +810,8 @@ export default function VirtualKeysTable({
 					<div className="relative w-full max-w-sm min-w-0 flex-1 basis-full sm:min-w-[180px] sm:basis-auto">
 						<Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
 						<Input
-							aria-label="Search virtual keys by name"
-							placeholder="Search by name..."
+							aria-label={`Search virtual keys by ${searchHint}`}
+							placeholder={`Search by ${searchHint}...`}
 							value={search}
 							onChange={(e) => onSearchChange(e.target.value)}
 							className="pl-9"

@@ -16,3 +16,22 @@ export function latestGraceDeadline(virtualKeys: { previous_value_expires_at?: s
 	}
 	return latest;
 }
+
+/**
+ * Renders the "Assigned To" label for a virtual key, or null when it is assigned
+ * to nothing. A key is assigned to at most one of a team, a customer, or a user.
+ *
+ * Shared by the table cell and the CSV export so the two cannot drift: the export
+ * used to omit the user branch entirely, which left the column blank for every
+ * user-assigned key.
+ */
+export function assignedToLabel(vk: {
+	team?: { name: string };
+	customer?: { name: string };
+	assigned_user?: { name: string; email: string } | null;
+}): string | null {
+	if (vk.team) return `Team: ${vk.team.name}`;
+	if (vk.customer) return `Customer: ${vk.customer.name}`;
+	if (vk.assigned_user) return `User: ${vk.assigned_user.name || vk.assigned_user.email}`;
+	return null;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { latestGraceDeadline } from "./virtualKeysTable.utils";
+import { assignedToLabel, latestGraceDeadline } from "./virtualKeysTable.utils";
 
 describe("latestGraceDeadline", () => {
 	it("returns null when no rotated key has a grace window", () => {
@@ -31,5 +31,33 @@ describe("latestGraceDeadline", () => {
 		expect(
 			latestGraceDeadline([{}, { previous_value_expires_at: "2026-08-28T10:00:00.500Z" }, { previous_value_expires_at: null }]),
 		).toBe("2026-08-28T10:00:00.500Z");
+	});
+});
+
+describe("assignedToLabel", () => {
+	it("returns null for an unassigned key", () => {
+		expect(assignedToLabel({})).toBeNull();
+		expect(assignedToLabel({ assigned_user: null })).toBeNull();
+	});
+
+	it("labels team and customer assignments", () => {
+		expect(assignedToLabel({ team: { name: "Platform" } })).toBe("Team: Platform");
+		expect(assignedToLabel({ customer: { name: "Acme" } })).toBe("Customer: Acme");
+	});
+
+	it("labels a user assignment, falling back to the email when the name is blank", () => {
+		expect(assignedToLabel({ assigned_user: { name: "Ada", email: "ada@acme.com" } })).toBe("User: Ada");
+		expect(assignedToLabel({ assigned_user: { name: "", email: "ada@acme.com" } })).toBe("User: ada@acme.com");
+	});
+
+	it("prefers team, then customer, then user", () => {
+		expect(
+			assignedToLabel({
+				team: { name: "Platform" },
+				customer: { name: "Acme" },
+				assigned_user: { name: "Ada", email: "ada@acme.com" },
+			}),
+		).toBe("Team: Platform");
+		expect(assignedToLabel({ customer: { name: "Acme" }, assigned_user: { name: "Ada", email: "ada@acme.com" } })).toBe("Customer: Acme");
 	});
 });
