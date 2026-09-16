@@ -13,7 +13,7 @@ export function ProviderFilterSelect({ providers, selectedProvider, onProviderCh
 			<SelectTrigger className="!h-7.5 w-[110px] text-xs sm:w-[130px]" data-testid={testId} size="sm">
 				<SelectValue placeholder="All Providers" />
 			</SelectTrigger>
-			<SelectContent>
+			<SelectContent className="w-auto min-w-[var(--radix-select-trigger-width)] max-w-[var(--radix-popper-available-width)]">
 				<SelectItem value="all">All Providers</SelectItem>
 				{providers.filter(Boolean).map((provider) => (
 					<SelectItem key={provider} value={provider} className="text-xs">
